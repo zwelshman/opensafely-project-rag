@@ -48,23 +48,61 @@ class OpenSAFELYScraper:
         soup = BeautifulSoup(html, 'lxml')
         projects = []
 
-        # Try to find project cards/items - we'll look for common patterns
-        # This will need to be adjusted based on the actual page structure
+        # Save HTML for debugging if no projects found
+        debug_mode = True  # Set to False to disable debugging
 
-        # Look for articles, divs with project class, or list items
-        project_elements = (
-            soup.find_all('article') or
-            soup.find_all('div', class_=lambda x: x and 'project' in x.lower()) or
-            soup.find_all('li', class_=lambda x: x and 'project' in x.lower())
-        )
+        # Check if page might be JavaScript-rendered
+        if 'react' in html.lower() or 'vue' in html.lower() or 'angular' in html.lower():
+            print("⚠ WARNING: Page appears to use JavaScript frameworks.")
+            print("   Projects may be loaded dynamically after page load.")
+            print("   Consider using Selenium or Playwright for scraping.")
 
+        # Check for common JavaScript indicators
+        if len(html) < 10000 and ('__NEXT_DATA__' in html or 'root' in html):
+            print("⚠ WARNING: Page appears to be a JavaScript app shell.")
+            print("   The projects list may be loaded via AJAX/fetch.")
+
+        # Try multiple parsing strategies
+
+        # Strategy 1: Look for articles
+        project_elements = soup.find_all('article')
+        if project_elements:
+            print(f"Found {len(project_elements)} <article> elements")
+
+        # Strategy 2: Look for divs with 'project' in class name
         if not project_elements:
-            # Try to find any links that might point to individual projects
+            project_elements = soup.find_all('div', class_=lambda x: x and 'project' in x.lower())
+            if project_elements:
+                print(f"Found {len(project_elements)} <div> elements with 'project' in class")
+
+        # Strategy 3: Look for list items with 'project' in class
+        if not project_elements:
+            project_elements = soup.find_all('li', class_=lambda x: x and 'project' in x.lower())
+            if project_elements:
+                print(f"Found {len(project_elements)} <li> elements with 'project' in class")
+
+        # Strategy 4: Look for any container with 'card' class
+        if not project_elements:
+            project_elements = soup.find_all(['div', 'article'], class_=lambda x: x and 'card' in x.lower())
+            if project_elements:
+                print(f"Found {len(project_elements)} card elements")
+
+        # Strategy 5: Look for links with '/project' in href
+        if not project_elements:
+            print("No structured elements found. Looking for project links...")
             links = soup.find_all('a', href=lambda x: x and '/project' in x.lower())
+            print(f"Found {len(links)} links with '/project' in href")
+
             for link in links:
-                project_url = urljoin(self.base_url, link.get('href'))
+                href = link.get('href')
+                if not href:
+                    continue
+
+                project_url = urljoin(self.base_url, href)
                 title = link.get_text(strip=True)
-                if title:
+
+                # Skip empty titles or very short ones (likely navigation)
+                if title and len(title) > 3:
                     projects.append({
                         'title': title,
                         'url': project_url,
@@ -72,10 +110,36 @@ class OpenSAFELYScraper:
                     })
         else:
             # Parse structured project elements
+            print(f"Parsing {len(project_elements)} project elements...")
             for element in project_elements:
                 project = self.parse_project_element(element)
                 if project:
                     projects.append(project)
+
+        # Debug output if no projects found
+        if not projects and debug_mode:
+            print("\n" + "="*60)
+            print("DEBUG: No projects found. Saving HTML for inspection...")
+            with open('debug_page_output.html', 'w', encoding='utf-8') as f:
+                f.write(html)
+            print("Saved HTML to: debug_page_output.html")
+            print(f"HTML length: {len(html)} characters")
+            print(f"Page title: {soup.find('title').get_text() if soup.find('title') else 'No title found'}")
+
+            # Show structure hints
+            main_content = soup.find('main') or soup.find('div', id='content') or soup.find('body')
+            if main_content:
+                print("\nMain content structure:")
+                children = [child.name for child in main_content.children if hasattr(child, 'name')]
+                print(f"  Direct children: {children[:20]}")
+
+                # Look for any headings
+                headings = main_content.find_all(['h1', 'h2', 'h3', 'h4'])
+                if headings:
+                    print(f"\n  Found {len(headings)} headings:")
+                    for h in headings[:5]:
+                        print(f"    {h.name}: {h.get_text(strip=True)[:60]}")
+            print("="*60 + "\n")
 
         return projects
 
@@ -199,6 +263,22 @@ def main():
         if projects:
             print("\nSample project:")
             print(json.dumps(projects[0], indent=2))
+        else:
+            print("\n" + "="*60)
+            print("NO PROJECTS FOUND")
+            print("="*60)
+            print("\nPossible causes:")
+            print("1. The website uses JavaScript to load projects dynamically")
+            print("2. The HTML structure has changed since this scraper was written")
+            print("3. The website is blocking automated requests")
+            print("\nNext steps:")
+            print("1. Check debug_page_output.html to see the actual HTML received")
+            print("2. Try using the Selenium-based scraper:")
+            print("   python scraper_selenium.py")
+            print("3. Visit https://www.opensafely.org/approved-projects/ in your browser")
+            print("   to verify projects are visible")
+            print("="*60)
+
     except Exception as e:
         print(f"Scraping failed: {e}")
         print("\nYou may need to:")
